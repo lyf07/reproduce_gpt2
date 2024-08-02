@@ -44,9 +44,9 @@ class TrainConfig:
         
         # checkpoint config
         self.checkpoint = True
-        self.checkpoint_interval = 5
+        self.checkpoint_interval = 200
         self.checkpoint_dir = "checkpoints"
-        self.log_interval = 10
+        self.log_interval = 20
         
         # warm up config, can refer to gpt3 paper, but didn't implement here
         self.linear_step = 2000
@@ -141,9 +141,9 @@ if __name__ == '__main__':
             step += 1
             # if i % train_config.log_interval == 0:
             # if i % 2 == 0:
-            print(f"Epoch: {epoch} | Iteration: {i} | Loss: {tot_loss / step: .5f} | Time: {end_time - start_time:.4f}s")
+            print(f"Epoch: {epoch} | Iteration: {i} | Learning Rate: {lr} | Loss: {tot_loss / step: .5f} | Time: {end_time - start_time:.4f}s")
             tot_loss = 0
-            if train_config.checkpoint and i % train_config.checkpoint_interval == 0:
+            if train_config.checkpoint and step % train_config.checkpoint_interval == 0:
                 # torch.save(gpt.state_dict(), f"{train_config.checkpoint_dir}/checkpoint_{epoch}_{i}.pt")
                 checkpoint_dir = train_config.checkpoint_dir
                 save_dir = os.path.join(os.getcwd(), checkpoint_dir)

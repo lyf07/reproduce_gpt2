@@ -37,5 +37,5 @@ if __name__ == '__main__':
         with torch.no_grad():
             response, loss = gpt(data, target)
             tot_loss += loss.detach()
-    print(tot_loss)
+    print(tot_loss / len(test_dataloader))
     
