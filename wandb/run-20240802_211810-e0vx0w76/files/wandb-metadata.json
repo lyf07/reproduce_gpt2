@@ -1,0 +1,48 @@
+{
+    "os": "macOS-14.4.1-arm64-arm-64bit",
+    "python": "3.12.4",
+    "heartbeatAt": "2024-08-02T13:18:15.606541",
+    "startedAt": "2024-08-02T13:18:10.807806",
+    "docker": null,
+    "cuda": null,
+    "args": [],
+    "state": "running",
+    "program": "<python with no main file>",
+    "codePathLocal": null,
+    "git": {
+        "remote": "git@github.com:lyf07/reproduce_gpt2.git",
+        "commit": "d26f431799ea1a71a623abc9dbe5d9d2a0ab865f"
+    },
+    "email": "3096977293@qq.com",
+    "root": "/Users/liuyifeng/Desktop/gpt2",
+    "host": "liuyifengdeMacBook-Air.local",
+    "username": "liuyifeng",
+    "executable": "/Users/liuyifeng/anaconda3/envs/gpt/bin/python3",
+    "cpu_count": 8,
+    "cpu_count_logical": 8,
+    "cpu_freq": {
+        "current": 3204,
+        "min": 600,
+        "max": 3204
+    },
+    "cpu_freq_per_core": [
+        {
+            "current": 3204,
+            "min": 600,
+            "max": 3204
+        }
+    ],
+    "disk": {
+        "/": {
+            "total": 228.27386474609375,
+            "used": 12.544075012207031
+        }
+    },
+    "gpuapple": {
+        "type": "arm",
+        "vendor": "Apple"
+    },
+    "memory": {
+        "total": 8.0
+    }
+}
