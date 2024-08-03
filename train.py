@@ -131,10 +131,10 @@ if __name__ == '__main__':
     tot_loss = 0
     step = 0
     
-    
-    # print("compiling the model............ (takes a ~minute)")
-    # gpt = torch.compile(gpt)
-    # print("model compilation success!")
+    if use_ddp and master_process:
+        print("compiling the model............ (takes a ~minute)")
+        gpt = torch.compile(gpt)
+        print("model compilation success!")
     
     
     start_time = time.time()
