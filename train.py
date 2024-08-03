@@ -3,12 +3,14 @@ import tiktoken
 import math
 import time
 import os
+from contextlib import nullcontext
 
 # torch libs
 import torch
 from torch.utils.data import Dataset, DataLoader
 from torch.optim import AdamW
-from contextlib import nullcontext
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.distributed import init_process_group, destroy_process_group
 
 # my own files
 import model
@@ -18,11 +20,31 @@ import prepare_data
 import warnings
 warnings.filterwarnings("ignore")
 
-dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
+dtype = torch.float16 if torch.cuda.is_available() else torch.float32
 ctx = torch.amp.autocast(device_type="cuda", dtype=dtype) if torch.cuda.is_available() else nullcontext()
 use_amp = torch.cuda.is_available()
 # scalar = torch.cuda.amp.GradScaler(enabled=use_amp)
-scalar = torch.amp.GradScaler("cuda", enabled=use_amp)
+scalar = torch.cuda.amp.GradScaler(enabled=use_amp)
+
+# ddp setting here
+backend = 'nccl'
+use_ddp = int(os.environ.get('RANK', -1)) != -1
+grad_accum_steps = 10 * 4
+
+# ddp init here
+if use_ddp:
+    init_process_group(backend=backend)
+    ddp_rank = int(os.environ.get('RANK'))
+    ddp_local_rank = int(os.environ.get('LOCAL_RANK'))
+    ddp_world_size = int(os.environ.get('WORLD_SIZE'))
+    device = f"cuda:{ddp_local_rank}"
+    torch.cuda.set_device(device)
+    master_process = ddp_rank == 0
+    assert grad_accum_steps % ddp_world_size == 0
+    grad_accum_steps = grad_accum_steps / ddp_world_size
+else:
+    master_process = True
+    ddp_world_size = 1
 
 
 
@@ -38,13 +60,13 @@ class TrainConfig:
     def __init__(self):
         # basic config
         self.batch_size = 4
-        self.epochs = 100
+        self.epochs = 1000
         self.device = torch.device(get_device())
-        self.grad_accum_steps = 5
+        self.grad_accum_steps = 10 * 4
         
         # checkpoint config
         self.checkpoint = True
-        self.checkpoint_interval = 200
+        self.checkpoint_interval = 10
         self.checkpoint_dir = "checkpoints"
         self.log_interval = 20
         
@@ -54,7 +76,7 @@ class TrainConfig:
         
         # optimizer config, all from gpt3 paper
         self.lr = 6e-4
-        self.eps=1e-8
+        self.eps = 1e-8
         self.beta1 = 0.9
         self.beta2 = 0.95
         self.weight_decay = 0.1
@@ -86,16 +108,19 @@ def evaluate(model, data_loader, config):
         data, target = data.to(config.device), target.to(config.device)
         response, loss = model(data, target)
         tot_loss += loss.detach()
-    return tot_loss
+    return tot_loss / len(data_loader)
     
 if __name__ == '__main__':
     model_config = model.GPTConfig()
     train_config = TrainConfig()
+    train_config.grad_accum_steps = grad_accum_steps
 
     device = train_config.device
     gpt = model.GPT(model_config)
     gpt.to(device)
     train_data, test_data = prepare_data.get_data()
+    n = len(train_data)
+    train_data = train_data[int(ddp_rank / ddp_world_size) * n: (int(ddp_rank / ddp_world_size) + 1) * n]
     train_dataloader = DataLoader(prepare_data.MyDataset(train_data, train_config), batch_size=train_config.batch_size, shuffle=True)
     test_dataloader  = DataLoader(prepare_data.MyDataset(test_data, train_config), batch_size=train_config.batch_size, shuffle=True)
     optimizer = gpt.configure_optimizers(train_config)
@@ -106,6 +131,13 @@ if __name__ == '__main__':
     tot_loss = 0
     step = 0
     
+    
+    # print("compiling the model............ (takes a ~minute)")
+    # gpt = torch.compile(gpt)
+    # print("model compilation success!")
+    
+    
+    start_time = time.time()
     # train loop below
     for epoch in range(train_config.epochs):
         for i, (train_data, target) in enumerate(train_dataloader):
@@ -118,8 +150,12 @@ if __name__ == '__main__':
             optimizer.zero_grad()
             train_data, target = train_data.to(device), target.to(device)
             gpt.train()
+            if i % train_config.grad_accum_steps == 0 and i != 0 and use_ddp:
+                model.require_backward_grad_sync = True
+            else:
+                model.require_backward_grad_sync = False
+                
             
-            start_time = time.time()
             with ctx:
                 response, loss = gpt(train_data, target)
             loss = loss / train_config.grad_accum_steps
@@ -137,11 +173,15 @@ if __name__ == '__main__':
             if torch.cuda.is_available():
                 torch.cuda.synchronize()
             end_time = time.time()
+            gap_time = end_time - start_time
+            start_time = end_time
+            
             
             step += 1
             # if i % train_config.log_interval == 0:
             # if i % 2 == 0:
-            print(f"Epoch: {epoch} | Iteration: {i} | Learning Rate: {lr} | Loss: {tot_loss / step: .5f} | Time: {end_time - start_time:.4f}s")
+            if master_process:
+                print(f"Epoch: {epoch} | Iteration: {i} | Learning Rate: {lr:.8f} | Loss: {tot_loss / step: .5f} | Time: {gap_time:.4f}s | Tokens per sec: {train_config.batch_size * train_config.grad_accum_steps * ddp_world_size* len(train_data)/gap_time:4f}tokens")
             tot_loss = 0
             if train_config.checkpoint and step % train_config.checkpoint_interval == 0:
                 # torch.save(gpt.state_dict(), f"{train_config.checkpoint_dir}/checkpoint_{epoch}_{i}.pt")
@@ -156,6 +196,8 @@ if __name__ == '__main__':
                         "loss": best_eval_loss,
                         "model_config": model_config,
                         "train_config": train_config,
+                        "epoch": epoch,
+                        "iter": i,
                         "step": step
                     }
                     print("Best model found! Saving..........")
@@ -164,3 +206,5 @@ if __name__ == '__main__':
                         os.makedirs(save_dir)
                     torch.save(checkpoint, os.path.join(save_dir, f"best_model.pt"))
                     print("Best model saved!")
+    if use_ddp:
+        destroy_process_group()
